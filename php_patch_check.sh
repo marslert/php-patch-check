@@ -177,11 +177,18 @@ vhost_versions() {
   local json
   json=$(whmapi1 php_get_vhost_versions --output=json 2>/dev/null) || return 1
   if command -v jq >/dev/null 2>&1; then
-    printf '%s\n' "$json" | jq -r '.data.vhost_versions[] | "\(.vhost) \(.version)"'
+    if [ "$(printf '%s\n' "$json" | jq -r '.metadata.result // 0')" != 1 ]; then
+      echo "whmapi1 failed: $(printf '%s\n' "$json" | jq -r '.metadata.reason // "no reason given"')" >&2
+      return 1
+    fi
+    printf '%s\n' "$json" | jq -r '(.data.vhost_versions // [])[] | "\(.vhost) \(.version)"'
   elif command -v python3 >/dev/null 2>&1; then
     printf '%s\n' "$json" | python3 -c 'import json, sys
-for v in json.load(sys.stdin)["data"]["vhost_versions"]:
-    print(v["vhost"], v["version"])'
+d = json.load(sys.stdin)
+if d.get("metadata", {}).get("result") != 1:
+    sys.exit("whmapi1 failed: " + str(d.get("metadata", {}).get("reason", "no reason given")))
+for v in (d.get("data") or {}).get("vhost_versions") or []:
+    print(v["vhost"], v["version"])' || return 1
   else
     echo "need jq or python3 to parse whmapi1 output" >&2
     return 1
