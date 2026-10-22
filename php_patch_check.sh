@@ -110,7 +110,8 @@ has_prefix() { rpm -qa --qf '%{NAME}\n' | grep -q "^$1"; }
 
 installed_evr() { rpm -q --qf '%{VERSION}-%{RELEASE}\n' "$1" | head -n 1; }
 
-# $1 package to read the version from, $2 minimum version, $3 package whose changelog holds the CVE fixes,
+# $1 package to read the version from, $2 minimum version, $3 package whose changelog holds the CVE fixes
+# (empty to skip the CVE check),
 # $4 "upstream" to compare only the PHP version (Plesk release numbers are not comparable with cPanel's)
 check_pkg() {
   local pkg=$1 min=$2 cl_pkg=$3 mode=${4:-full} cur cmp_cur cmp_min
@@ -129,7 +130,9 @@ check_pkg() {
   else
     echo "$pkg: $cur - [ safe ]"
   fi
-  CVE_PKGS+=("$cl_pkg")
+  if [ -n "$cl_pkg" ]; then
+    CVE_PKGS+=("$cl_pkg")
+  fi
 }
 
 # cloudlinux if the package release says so (e.g. 11.el9.cloudlinux.1), else cpanel
@@ -227,12 +230,11 @@ check_plesk() {
     if [ -z "$min" ]; then
       cur=$(installed_evr "$pkg")
       echo "$pkg: $cur - [ unknown: no minimum in table ]"
-      CVE_PKGS+=("$pkg")
       continue
     fi
-    check_pkg "$pkg" "$min" "$pkg" upstream
+    check_pkg "$pkg" "$min" "" upstream
   done
-  echo "(Plesk status compares the PHP version only, not the Plesk release; see the CVE check below)"
+  echo "(Plesk status compares the PHP version only, not the Plesk release; Plesk packages have no changelog CVE check)"
 }
 
 check_cves() {
