@@ -172,6 +172,38 @@ check_ea4() {
   done
 }
 
+# "domain ea-phpNN" for every website, from WHM's php_get_vhost_versions
+vhost_versions() {
+  local json
+  json=$(whmapi1 php_get_vhost_versions --output=json 2>/dev/null) || return 1
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s\n' "$json" | jq -r '.data.vhost_versions[] | "\(.vhost) \(.version)"'
+  elif command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' "$json" | python3 -c 'import json, sys
+for v in json.load(sys.stdin)["data"]["vhost_versions"]:
+    print(v["vhost"], v["version"])'
+  else
+    echo "need jq or python3 to parse whmapi1 output" >&2
+    return 1
+  fi
+}
+
+check_old_sites() {
+  local list dom ver n=0
+  list=$(vhost_versions) || { echo "could not read vhost PHP versions from whmapi1"; return 1; }
+  while read -r dom ver; do
+    [ -n "$dom" ] || continue
+    case "$ver" in
+      ea-php[0-9]*) ;;
+      *) continue ;;
+    esac
+    [ "${ver#ea-php}" -lt 74 ] || continue
+    n=$((n + 1))
+    printf '%-40s %s\n' "$dom" "$ver"
+  done <<< "$list"
+  [ $n -gt 0 ] || echo "no websites on PHP older than 7.4"
+}
+
 # Minor versions (e.g. 74 82 83) that Plesk reports as installed
 plesk_minors() {
   plesk bin php_handler --list 2>/dev/null \
@@ -251,6 +283,10 @@ main() {
       echo; echo "== EasyApache4 (ea-php) =="
       check_ea4
       ran=1
+    fi
+    if command -v whmapi1 >/dev/null 2>&1; then
+      echo; echo "== Websites on PHP older than 7.4 =="
+      check_old_sites
     fi
     if command -v plesk >/dev/null 2>&1; then
       echo; echo "== Plesk (from plesk bin php_handler --list, upstream PHP version only) =="
