@@ -140,12 +140,23 @@ check_pkg() {
   CVE_PKGS+=("$cl_pkg")
 }
 
+# Version from each installed binary (php -v); CVEs from the ea-phpNN-php-cli changelog
 check_ea4() {
-  local m min
-  for m in $ALL_MINORS; do
+  local php pkg m min ver
+  for php in /opt/cpanel/ea-php*/root/usr/bin/php; do
+    [ -x "$php" ] || continue
+    pkg=$(printf '%s\n' "$php" | sed -E 's#.*/(ea-php[0-9]+)/root/usr/bin/php#\1#')
+    m=${pkg#ea-php}
+    ver=$("$php" -v | head -n 1 | awk '{print $2}')
     min=$(min_for "$m")
-    [ -n "$min" ] || continue
-    check_pkg "ea-php$m" "$min" "ea-php$m-php-cli"
+    if [ -z "$min" ]; then
+      echo "$pkg: $ver - [ unknown: no minimum in table ]"
+    elif is_older "$ver" "${min%%-*}"; then
+      echo "$pkg: $ver - [ danger ]"
+    else
+      echo "$pkg: $ver - [ safe ]"
+    fi
+    CVE_PKGS+=("$pkg-php-cli")
   done
 }
 
@@ -225,8 +236,8 @@ main() {
 
   if command -v rpm >/dev/null 2>&1; then
     local ran=0
-    if has_prefix 'ea-php'; then
-      echo; echo "== EasyApache4 (ea-php, $TABLE table) =="
+    if ls /opt/cpanel/ea-php*/root/usr/bin/php >/dev/null 2>&1; then
+      echo; echo "== EasyApache4 (ea-php, $TABLE table; PHP version from php -v, release not compared) =="
       check_ea4
       ran=1
     fi
