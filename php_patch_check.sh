@@ -185,10 +185,15 @@ check_plesk() {
 }
 
 check_cves() {
-  local pkg cve
+  local pkg cve log
   for pkg in "${CVE_PKGS[@]}"; do
+    log=$(rpm -q --changelog "$pkg" 2>/dev/null)
+    if [ -z "$log" ]; then
+      echo "$pkg: package has no changelog, cannot confirm CVEs"
+      continue
+    fi
     for cve in $CVES; do
-      if rpm -q --changelog "$pkg" 2>/dev/null | grep -qFw -- "$cve"; then
+      if printf '%s\n' "$log" | grep -qFw -- "$cve"; then
         echo "$pkg  $cve: found in changelog"
       else
         echo "$pkg  $cve: NOT found in changelog"
@@ -217,17 +222,16 @@ check_debian() {
 main() {
   parse_args "$@"
   [ "$TABLE" = auto ] && TABLE=$(detect_table)
-  echo "Version table: $TABLE"
 
   if command -v rpm >/dev/null 2>&1; then
     local ran=0
     if has_prefix 'ea-php'; then
-      echo; echo "== EasyApache4 (ea-php) =="
+      echo; echo "== EasyApache4 (ea-php, $TABLE table) =="
       check_ea4
       ran=1
     fi
     if command -v plesk >/dev/null 2>&1; then
-      echo; echo "== Plesk (from plesk bin php_handler --list) =="
+      echo; echo "== Plesk (from plesk bin php_handler --list, upstream PHP version only) =="
       check_plesk
       ran=1
     fi
