@@ -149,25 +149,39 @@ check_ea4() {
   done
 }
 
+# Minor versions (e.g. 74 82 83) that Plesk reports as installed
+plesk_minors() {
+  plesk bin php_handler --list 2>/dev/null \
+    | grep -oE 'php/[0-9]+\.[0-9]+|plesk-php[0-9]{2}|php[0-9]{2}' \
+    | sed -E 's#^php/([0-9]+)\.([0-9]+)$#\1\2#; s#^plesk-php##; s#^php##' \
+    | sort -u
+}
+
 check_plesk() {
-  local m min pkg found count=0
-  for m in $ALL_MINORS; do
-    min=$(min_for "$m")
-    [ -n "$min" ] || continue
-    found=""
+  local m min pkg cur minors
+  minors=$(plesk_minors)
+  if [ -z "$minors" ]; then
+    echo "plesk bin php_handler --list returned no PHP versions"
+    return 1
+  fi
+  for m in $minors; do
     # the -cli package carries the changelog; the plesk-phpNN metapackage has none
-    for pkg in "plesk-php$m-cli" "plesk-php$m"; do
-      if has_pkg "$pkg"; then
-        found=$pkg
-        break
-      fi
-    done
-    [ -n "$found" ] || continue
-    count=$((count + 1))
-    check_pkg "$found" "$min" "$found" upstream
+    pkg="plesk-php$m-cli"
+    has_pkg "$pkg" || pkg="plesk-php$m"
+    if ! has_pkg "$pkg"; then
+      echo "plesk-php$m: listed by php_handler but no package found"
+      continue
+    fi
+    min=$(min_for "$m")
+    if [ -z "$min" ]; then
+      cur=$(installed_evr "$pkg")
+      echo "$pkg: $cur - [ unknown: no minimum in table ]"
+      CVE_PKGS+=("$pkg")
+      continue
+    fi
+    check_pkg "$pkg" "$min" "$pkg" upstream
   done
   echo "(Plesk status compares the PHP version only, not the Plesk release; see the CVE check below)"
-  [ $count -gt 0 ] || echo "no plesk-phpNN packages found (package names may differ on this host)"
 }
 
 check_cves() {
@@ -212,8 +226,8 @@ main() {
       check_ea4
       ran=1
     fi
-    if has_prefix 'plesk-php'; then
-      echo; echo "== Plesk (plesk-php) =="
+    if command -v plesk >/dev/null 2>&1; then
+      echo; echo "== Plesk (from plesk bin php_handler --list) =="
       check_plesk
       ran=1
     fi
