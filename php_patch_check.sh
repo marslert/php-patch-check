@@ -118,15 +118,21 @@ has_prefix() { rpm -qa --qf '%{NAME}\n' | grep -q "^$1"; }
 
 installed_evr() { rpm -q --qf '%{VERSION}-%{RELEASE}\n' "$1" | head -n 1; }
 
-# $1 package to read the version from, $2 minimum version, $3 package whose changelog holds the CVE fixes
+# $1 package to read the version from, $2 minimum version, $3 package whose changelog holds the CVE fixes,
+# $4 "upstream" to compare only the PHP version (Plesk release numbers are not comparable with cPanel's)
 check_pkg() {
-  local pkg=$1 min=$2 cl_pkg=$3 cur
+  local pkg=$1 min=$2 cl_pkg=$3 mode=${4:-full} cur cmp_cur cmp_min
   if ! has_pkg "$pkg"; then
     echo "$pkg: not installed"
     return 1
   fi
   cur=$(installed_evr "$pkg")
-  if is_older "$cur" "$min"; then
+  if [ "$mode" = upstream ]; then
+    cmp_cur=${cur%%-*}; cmp_min=${min%%-*}
+  else
+    cmp_cur=$cur; cmp_min=$min
+  fi
+  if is_older "$cmp_cur" "$cmp_min"; then
     echo "$pkg: $cur - [ danger ]"
   else
     echo "$pkg: $cur - [ safe ]"
@@ -149,7 +155,8 @@ check_plesk() {
     min=$(min_for "$m")
     [ -n "$min" ] || continue
     found=""
-    for pkg in "plesk-php$m" "plesk-php$m-cli"; do
+    # the -cli package carries the changelog; the plesk-phpNN metapackage has none
+    for pkg in "plesk-php$m-cli" "plesk-php$m"; do
       if has_pkg "$pkg"; then
         found=$pkg
         break
@@ -157,8 +164,9 @@ check_plesk() {
     done
     [ -n "$found" ] || continue
     count=$((count + 1))
-    check_pkg "$found" "$min" "$found"
+    check_pkg "$found" "$min" "$found" upstream
   done
+  echo "(Plesk status compares the PHP version only, not the Plesk release; see the CVE check below)"
   [ $count -gt 0 ] || echo "no plesk-phpNN packages found (package names may differ on this host)"
 }
 
