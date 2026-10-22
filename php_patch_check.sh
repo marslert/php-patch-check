@@ -5,15 +5,14 @@
 # Checks installed PHP packages against the minimum patched versions and
 # confirms the CVE fixes appear in the package changelogs.
 #
-#   cPanel EasyApache4     ea-phpNN             (cPanel version table)
-#   CloudLinux EasyApache4 ea-phpNN             (CloudLinux version table)
-#   Plesk                  plesk-phpNN          (cPanel version table)
-#   Debian / Ubuntu        changelog check only (no version table)
+#   cPanel / CloudLinux EA4  ea-phpNN-php-cli    (table chosen per package: "cloudlinux" in its release, else cPanel)
+#   Plesk                    plesk-phpNN         (versions from plesk bin php_handler --list; cPanel table)
+#   Debian / Ubuntu          changelog check only (no version table)
 #
 # Usage: bash php_patch_check.sh [--table auto|cpanel|cloudlinux]
 #
-# Run as root on the server. --table defaults to auto: CloudLinux if
-# cloudlinux-release is installed, otherwise cPanel.
+# Run as root on the server. --table defaults to auto, which picks the
+# table per package. Use --table to force one table for every package.
 
 set -u
 
@@ -82,13 +81,6 @@ min_for() {
   fi
 }
 
-detect_table() {
-  if rpm -q cloudlinux-release >/dev/null 2>&1; then
-    echo cloudlinux
-  else
-    echo cpanel
-  fi
-}
 
 # Split an EVR such as 7.4.33-19.1.cpanel.el8 into V=7.4.33 and R=19
 split_evr() {
@@ -140,23 +132,43 @@ check_pkg() {
   CVE_PKGS+=("$cl_pkg")
 }
 
-# Version from each installed binary (php -v); CVEs from the ea-phpNN-php-cli changelog
+# cloudlinux if the package release says so (e.g. 11.el9.cloudlinux.1), else cpanel
+# --table overrides this for every package
+package_table() {
+  if [ "$TABLE" != auto ]; then
+    echo "$TABLE"
+  elif rpm -q --qf '%{RELEASE}\n' "$1" | grep -qi cloudlinux; then
+    echo cloudlinux
+  else
+    echo cpanel
+  fi
+}
+
+# Version-release of each ea-phpNN-php-cli, read from the RPM database
+# (the release is needed: a CloudLinux build is only safe at its own release number)
+# CVEs are checked against the same package's changelog
 check_ea4() {
-  local php pkg m min ver
+  local php pkg cli m tbl min cur
   for php in /opt/cpanel/ea-php*/root/usr/bin/php; do
     [ -x "$php" ] || continue
     pkg=$(printf '%s\n' "$php" | sed -E 's#.*/(ea-php[0-9]+)/root/usr/bin/php#\1#')
+    cli="$pkg-php-cli"
     m=${pkg#ea-php}
-    ver=$("$php" -v | head -n 1 | awk '{print $2}')
-    min=$(min_for "$m")
-    if [ -z "$min" ]; then
-      echo "$pkg: $ver - [ unknown: no minimum in table ]"
-    elif is_older "$ver" "${min%%-*}"; then
-      echo "$pkg: $ver - [ danger ]"
-    else
-      echo "$pkg: $ver - [ safe ]"
+    if ! has_pkg "$cli"; then
+      echo "$cli: not installed"
+      continue
     fi
-    CVE_PKGS+=("$pkg-php-cli")
+    cur=$(installed_evr "$cli")
+    tbl=$(package_table "$cli")
+    if [ "$tbl" = cloudlinux ]; then min=$(min_cloudlinux "$m"); else min=$(min_cpanel "$m"); fi
+    if [ -z "$min" ]; then
+      echo "$cli: $cur - [ unknown: no $tbl minimum for this version ]"
+    elif is_older "$cur" "$min"; then
+      echo "$cli: $cur - [ danger ] ($tbl table, min $min)"
+    else
+      echo "$cli: $cur - [ safe ] ($tbl table, min $min)"
+    fi
+    CVE_PKGS+=("$cli")
   done
 }
 
@@ -232,12 +244,11 @@ check_debian() {
 
 main() {
   parse_args "$@"
-  [ "$TABLE" = auto ] && TABLE=$(detect_table)
 
   if command -v rpm >/dev/null 2>&1; then
     local ran=0
     if ls /opt/cpanel/ea-php*/root/usr/bin/php >/dev/null 2>&1; then
-      echo; echo "== EasyApache4 (ea-php, $TABLE table; PHP version from php -v, release not compared) =="
+      echo; echo "== EasyApache4 (ea-php) =="
       check_ea4
       ran=1
     fi
