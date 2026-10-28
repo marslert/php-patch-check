@@ -108,7 +108,34 @@ has_pkg() { rpm -q "$1" >/dev/null 2>&1; }
 
 has_prefix() { rpm -qa --qf '%{NAME}\n' | grep -q "^$1"; }
 
-installed_evr() { rpm -q --qf '%{VERSION}-%{RELEASE}\n' "$1" | head -n 1; }
+# Several builds of one package can be installed at once (an old and a new
+# CloudLinux build can both sit in the RPM database). `rpm -q` order is not a
+# version order, so `head -n 1` can report the old one. Read them all, keep the newest.
+installed_evrs() { rpm -q --qf '%{VERSION}-%{RELEASE}\n' "$1" 2>/dev/null | grep -v 'not installed'; }
+
+# Returns 0 when EVR $1 is newer than EVR $2: version first, then the leading release number
+evr_newer() {
+  local a_v a_r b_v b_r
+  split_evr "$1"; a_v=$V; a_r=$R
+  split_evr "$2"; b_v=$V; b_r=$R
+  if [ "$a_v" != "$b_v" ]; then
+    [ "$(printf '%s\n%s\n' "$a_v" "$b_v" | sort -V | tail -n 1)" = "$a_v" ]
+  else
+    [ "$a_r" -gt "$b_r" ]
+  fi
+}
+
+# Newest EVR from stdin
+newest_evr() {
+  local best="" evr
+  while read -r evr; do
+    [ -n "$evr" ] || continue
+    if [ -z "$best" ] || evr_newer "$evr" "$best"; then best=$evr; fi
+  done
+  printf '%s\n' "$best"
+}
+
+installed_evr() { installed_evrs "$1" | newest_evr; }
 
 # $1 package to read the version from, $2 minimum version, $3 package whose changelog holds the CVE fixes
 # (empty to skip the CVE check),
@@ -140,7 +167,7 @@ check_pkg() {
 package_table() {
   if [ "$TABLE" != auto ]; then
     echo "$TABLE"
-  elif rpm -q --qf '%{RELEASE}\n' "$1" | grep -qi cloudlinux; then
+  elif installed_evr "$1" | grep -qi cloudlinux; then
     echo cloudlinux
   else
     echo cpanel
@@ -149,7 +176,7 @@ package_table() {
 
 # Version-release of each ea-phpNN-php-cli, read from the RPM database
 # (the release is needed: a CloudLinux build is only safe at its own release number)
-# CVEs are checked against the same package's changelog
+# CVEs are checked against the changelog of the newest installed build
 check_ea4() {
   local php pkg cli m tbl min cur
   for php in /opt/cpanel/ea-php*/root/usr/bin/php; do
@@ -171,7 +198,7 @@ check_ea4() {
     else
       echo "$cli: $cur - [ safe ] ($tbl table, min $min)"
     fi
-    CVE_PKGS+=("$cli")
+    CVE_PKGS+=("$cli-$cur")
   done
 }
 
